@@ -1,0 +1,155 @@
+architecture:
+  version: 0.2
+
+  subtree:
+    - name: diannao
+      attributes:
+        technology: 40nm
+
+      local:
+        - name       : DRAM
+          class      : DRAM
+          attributes :
+            instances       : 1
+            word-bits       : 16
+        
+        - name       : OutputBuffer
+          class      : SRAM
+          attributes :
+            entries         : 1024  # 64 * 16 = 1024
+            instances       : 1
+            meshX           : 1
+            word-bits       : 16
+            block-size      : 16
+            read_bandwidth  : 16 # words/cycle
+            write_bandwidth : 16 # words/cycle
+
+        - name       : InputBuffer
+          class      : SRAM
+          attributes :
+            entries         : 1024 # 64 * 16 = 1024
+            instances       : 1
+            meshX           : 1
+            word-bits       : 16
+            block-size      : 16
+            read_bandwidth  : 16 # words/cycle
+            write_bandwidth : 16 # words/cycle
+
+        - name       : PsumRegFile
+          class      : regfile
+          attributes :
+            entries         : 1
+            instances       : 16
+            meshX           : 16
+            word-bits       : 16
+            cluster-size    : 16
+            read_bandwidth  : 1  # words/cycle
+            write_bandwidth : 1  # words/cycle
+            
+        - name       : WeightBuffer
+          class      : regfile
+          attributes :
+            entries         : 64
+            instances       : 256
+            meshX           : 16
+            word-bits       : 16
+            cluster-size    : 256
+            read_bandwidth  : 1  # words/cycle
+            write_bandwidth : 1  # words/cycle
+
+        - name       : MACs
+          class      : intmac
+          attributes :            
+            instances       : 256
+            meshX           : 16
+            word-bits       : 16
+
+problem:
+  shape:
+    name: conv_test
+    dimensions:  [N,K,C,Q,P,S,R]
+    data-spaces:
+    - name: Weights
+      projection:
+      - [ [R] ]      
+      - [ [S] ]
+      - [ [C] ]
+      - [ [K] ]
+    - name: Inputs
+      projection:
+      - [ [C] ]
+      - [ [N] ]
+      - [ [R], [P] ]
+      - [ [Q], [S] ]
+    - name: Outputs
+      projection:
+      - [ [N] ]
+      - [ [K] ]
+      - [ [P] ]
+      - [ [Q] ]
+      read-write: True
+      
+  instance:
+    P       : 16
+    Q       : 16
+    R       : 3
+    S       : 3
+    C       : 128
+    K       : 128
+    N       : 1
+
+mapper:
+  optimization-metrics: [ delay, energy ]
+  live-status: True
+  diagnostics: True
+
+mapspace: 
+  - target      : DRAM
+    type        : temporal
+    permutation : CRSKPQN
+
+  - target : OutputBuffer
+    type       : bypassing
+    keep        : [ Outputs ]
+    bypass      : [ Inputs, Weights ]
+  - target : OutputBuffer
+    type        : temporal
+    factors     : C=1 R=1 S=1 K=1
+    permutation : CRSKPQN
+
+  - target : InputBuffer
+    type       : bypassing
+    keep        : [ Inputs ]
+    bypass      : [ Outputs, Weights ]
+  - target : InputBuffer
+    type       : temporal
+    factors     : C=1 R=1 S=1 K=1 P=1 Q=1 N=1
+    permutation : CRSKPQN
+  - target : InputBuffer
+    type       : spatial
+    factors     : C=16 R=1 S=1 K=1 P=1 Q=1 N=1
+    permutation : CRSKPQN
+    split       : 1
+    
+  - target : PsumRegFile
+    type       : bypassing
+    keep        : [ Outputs ]
+    bypass      : [ Inputs, Weights ]
+  - target : PsumRegFile
+    type       : temporal
+    factors     : K=1 P=1 Q=1 N=1
+    permutation : KPQNCRS
+  - target : PsumRegFile
+    type       : spatial
+    factors     : K=16 P=1 Q=1 N=1 C=1 R=1 S=1
+    permutation : KPQNCRS
+    split       : 0
+
+  - target : WeightBuffer
+    type       : bypassing
+    keep        : [ Weights ]
+    bypass      : [ Inputs, Outputs ]
+  - target : WeightBuffer
+    type       : temporal
+    factors     : C=1 K=1 R=1 S=1
+    permutation : CKRSPQN
